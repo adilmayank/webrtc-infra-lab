@@ -3,6 +3,7 @@ package rooms
 import (
 	"log"
 	"sync"
+	"time"
 
 	"minimal-sfu/media"
 
@@ -21,16 +22,27 @@ type Peer struct {
 	mu          sync.Mutex
 }
 
+// TrackInfo links a local forwarding track back to its source
+type TrackInfo struct {
+	LocalTrack  *webrtc.TrackLocalStaticRTP
+	SenderPeer  *Peer               // 	who's sending this track
+	RemoteTrack *webrtc.TrackRemote //	the actual incoming track
+}
+
 type Room struct {
 	ID    string
 	Peers map[string]*Peer
 	mu    sync.RWMutex
+	//	Tracks maps local track ID -> info about its source
+	//	Used to find the sender when a new peer subscribes and needs a PLI.
+	Tracks map[string]*TrackInfo
 }
 
 func NewRoom(id string) *Room {
 	return &Room{
-		ID:    id,
-		Peers: make(map[string]*Peer),
+		ID:     id,
+		Peers:  make(map[string]*Peer),
+		Tracks: make(map[string]*TrackInfo),
 	}
 }
 
@@ -87,24 +99,47 @@ func (r *Room) SetupTrackHandler(peer *Peer) {
 			return
 		}
 
+		r.mu.Lock()
+		r.Tracks[localTrack.ID()] = &TrackInfo{
+			LocalTrack:  localTrack,
+			SenderPeer:  peer,
+			RemoteTrack: remoteTrack,
+		}
+		r.mu.Unlock()
+
 		// Step 2: Add this local track to every OTHER peer's PeerConnection
 		r.mu.RLock()
 		for id, otherPeer := range r.Peers {
 			if id == peer.ID {
 				continue // don't send my own track back to me
 			}
-			r.addTrackToPeer(otherPeer, localTrack)
+			r.addTrackToPeer(otherPeer, localTrack, peer, remoteTrack)
 		}
 		r.mu.RUnlock()
 
-		// If this is a video track, request a keyframe immediately
-		// so that peers who are already connected get a clean start
-		if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
-			r.sendPLI(peer, remoteTrack)
-		}
+		// This is redundant — addTrackToPeer already sends PLI for video tracks
+		// if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
+		//     r.sendPLI(peer, remoteTrack)
+		// }
 
 		// Step 3: Start the forwarding goroutine
 		go media.ForwardRTP(remoteTrack, localTrack)
+
+		// For video tracks, periodically request keyframes as a safety net.
+		// In production you'd be smarter about this (only on packet loss),
+		// but for Milestone B this ensures things recover.
+		if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
+			go func() {
+				ticker := time.NewTicker(3 * time.Second)
+				defer ticker.Stop()
+				for range ticker.C {
+					if r.GetPeer(peer.ID) == nil {
+						return
+					}
+					r.sendPLI(peer, remoteTrack)
+				}
+			}()
+		}
 	})
 }
 
@@ -127,13 +162,13 @@ func (r *Room) sendPLI(senderPeer *Peer, remoteTrack *webrtc.TrackRemote) {
 
 }
 
-func (r *Room) addTrackToPeer(peer *Peer, track *webrtc.TrackLocalStaticRTP) {
-	peer.mu.Lock()
-	defer peer.mu.Unlock()
+func (r *Room) addTrackToPeer(otherPeer *Peer, track *webrtc.TrackLocalStaticRTP, senderPeer *Peer, remoteTrack *webrtc.TrackRemote) {
+	otherPeer.mu.Lock()
 
-	sender, err := peer.PeerConnection.AddTrack(track)
+	sender, err := otherPeer.PeerConnection.AddTrack(track)
 	if err != nil {
-		log.Printf("Error adding track to peer %s: %v", peer.ID, err)
+		otherPeer.mu.Unlock()
+		log.Printf("Error adding track to peer %s: %v", otherPeer.ID, err)
 		return
 	}
 
@@ -148,7 +183,14 @@ func (r *Room) addTrackToPeer(peer *Peer, track *webrtc.TrackLocalStaticRTP) {
 		}
 	}()
 
-	peer.LocalTracks[track.ID()] = track
+	otherPeer.LocalTracks[track.ID()] = track
+	otherPeer.mu.Unlock()
+
+	if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
+		//	Commented intentionally, to see that go routine sendPLI will anyways fix the frozen video delay
+		// r.sendPLI(senderPeer, remoteTrack)
+	}
+
 }
 
 // RemovePeer closes the peer connection and removes it from the room.
@@ -176,4 +218,21 @@ func (r *Room) GetPeer(peerID string) *Peer {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.Peers[peerID]
+}
+
+// SubscribeToExistingTracks adds all tracks currently in the room to the
+// newly joined peer. This handles the case where peer B joins after peer A
+// has already started sending — without this, B would never receive A's tracks
+// because A's OnTrack already fired before B existed.
+func (r *Room) SubscribeToExistingTracks(peer *Peer) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, trackInfo := range r.Tracks {
+		// Don't subscribe a peer to their own tracks
+		if trackInfo.SenderPeer.ID == peer.ID {
+			continue
+		}
+		r.addTrackToPeer(peer, trackInfo.LocalTrack, trackInfo.SenderPeer, trackInfo.RemoteTrack)
+	}
 }

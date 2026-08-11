@@ -99,6 +99,9 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 			// the connection is established.
 			room.SetupTrackHandler(peer)
 
+			// Subscribe this new peer to all tracks already being forwarded in the room
+			room.SubscribeToExistingTracks(peer)
+
 			// ICE candidate callback — when pion discovers a candidate,
 			// send it to the browser so it can reach us.
 			peer.PeerConnection.OnICECandidate(func(c *webrtc.ICECandidate) {
