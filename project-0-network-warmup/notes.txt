@@ -1,0 +1,5 @@
+- Created UDP echo server, client sends a message, gets it echoed back even for multiple users
+- Created a TCP chat server that accepts 3+ simultaneous client connections
+- A message from one TCP client is broadcast to all other connected clients
+- UDP does not guarantee ordered packets, retransmission of missed or corrupted packets but TCP does. UDP is a more appropriate protocol when low latency and high continuity is required at the cost of some data being missed, but TCP though slower than UDP, is required at places where data completeness is required.
+- Since a system is assigned its own private IP, its important to know to which process should the incoming packet from the router should go to. For this distinction, a port is assigned to that process so that all the incoming packets at a certain port is bound to reach a certain process. For example nginx, all the TCP traffic would arrive to port 443. Thats why a unique destination is shown like 192.168.2.0:443 i.e. <HOST>:<PORT>.

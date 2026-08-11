@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Signaling Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; }
+    #log { white-space: pre-wrap; background: #111; color: #0f0; padding: 10px; height: 400px; overflow-y: scroll; }
+    button { margin: 5px; padding: 8px 16px; cursor: pointer; }
+    video { width: 300px; height: 225px; background: #000; margin: 5px; }
+  </style>
+</head>
+<body>
+  <h1>Signaling Test</h1>
+  <div>
+    <button id="joinBtn">Join Room</button>
+    <button id="callBtn" disabled>Start Call (send offer)</button>
+  </div>
+  <div>
+    <video id="localVideo" autoplay muted playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+  </div>
+  <div id="log"></div>
+
+  <script>
+    const ROOM = "test-room";
+    const log = (msg) => {
+      const el = document.getElementById("log");
+      el.textContent += msg + "\n";
+      el.scrollTop = el.scrollHeight;
+      console.log(msg);
+    };
+
+    // --- WebSocket setup ---
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+
+    ws.onopen = () => log("[ws] connected");
+    ws.onclose = () => log("[ws] disconnected");
+
+    // --- WebRTC setup ---
+    const config = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+    let pc = null;
+    let localStream = null;
+
+    function createPeerConnection() {
+      pc = new RTCPeerConnection(config);
+
+      // Send ICE candidates to the other peer via signaling
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          log("[ice] sending candidate");
+          ws.send(JSON.stringify({
+            type: "ice-candidate",
+            room: ROOM,
+            payload: e.candidate,
+          }));
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        log("[ice] state: " + pc.iceConnectionState);
+      };
+
+      // When remote track arrives, show it
+      pc.ontrack = (e) => {
+        log("[rtc] got remote track: " + e.track.kind);
+        document.getElementById("remoteVideo").srcObject = e.streams[0];
+      };
+
+      // Attach local tracks to the connection
+      if (localStream) {
+        localStream.getTracks().forEach((track) => {
+          pc.addTrack(track, localStream);
+        });
+      }
+    }
+
+    // --- Signaling message handler ---
+    ws.onmessage = async (e) => {
+      const msg = JSON.parse(e.data);
+      log("[ws] received: " + msg.type);
+
+      switch (msg.type) {
+        case "offer":
+          // We received an offer — we are the callee
+          log("[rtc] got offer, creating answer...");
+          createPeerConnection();
+          await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          ws.send(JSON.stringify({
+            type: "answer",
+            room: ROOM,
+            payload: answer,
+          }));
+          log("[rtc] sent answer");
+          break;
+
+        case "answer":
+          // We sent the offer, now got the answer back
+          log("[rtc] got answer");
+          await pc.setRemoteDescription(new RTCSessionDescription(msg.payload));
+          break;
+
+        case "ice-candidate":
+          log("[ice] got remote candidate");
+          if (pc) {
+            await pc.addIceCandidate(new RTCIceCandidate(msg.payload));
+          }
+          break;
+
+        case "peer-left":
+          log("[room] peer left");
+          if (pc) {
+            pc.close();
+            pc = null;
+          }
+          document.getElementById("remoteVideo").srcObject = null;
+          break;
+      }
+    };
+
+    // --- Button handlers ---
+    document.getElementById("joinBtn").addEventListener("click", async () => {
+      // Get local media
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      document.getElementById("localVideo").srcObject = localStream;
+      log("[media] got local stream");
+
+      // Join the room
+      ws.send(JSON.stringify({ type: "join", room: ROOM }));
+      log("[room] joined: " + ROOM);
+
+      document.getElementById("joinBtn").disabled = true;
+      document.getElementById("callBtn").disabled = false;
+    });
+
+    document.getElementById("callBtn").addEventListener("click", async () => {
+      log("[rtc] creating offer...");
+      createPeerConnection();
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({
+        type: "offer",
+        room: ROOM,
+        payload: offer,
+      }));
+      log("[rtc] sent offer");
+      document.getElementById("callBtn").disabled = true;
+    });
+  </script>
+</body>
+</html>

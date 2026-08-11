@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Minimal SFU - Audio/Video Room</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+    #status { padding: 8px; margin: 10px 0; border-radius: 4px; background: #eee; }
+    #status.connected { background: #d4edda; }
+    #status.error { background: #f8d7da; }
+    #remoteAudio { margin-top: 20px; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #roomInput { padding: 8px; font-size: 16px; width: 200px; }
+  </style>
+</head>
+<body>
+  <h1>Minimal SFU - Audio/Video Room</h1>
+  <div>
+    <input id="roomInput" type="text" placeholder="Room name" value="test-room" />
+    <button id="joinBtn" onclick="join()">Join Room</button>
+  </div>
+  <div id="status">Not connected</div>
+  <div id="localVideo" style="margin-top:20px;">
+    <h3>You</h3>
+  </div>
+  <div id="remoteMedia" style="margin-top:20px;">
+    <h3>Remote Participants</h3>
+  </div>
+
+  <script>
+    let ws;
+    let pc;
+    // Generate a random peer ID for this tab
+    const peerId = 'peer-' + Math.random().toString(36).substr(2, 8);
+
+    function setStatus(text, className) {
+      const el = document.getElementById('status');
+      el.textContent = text;
+      el.className = className || '';
+    }
+
+    async function join() {
+      const roomId = document.getElementById('roomInput').value.trim();
+      if (!roomId) {
+        alert('Enter a room name');
+        return;
+      }
+
+      document.getElementById('joinBtn').disabled = true;
+      setStatus('Connecting...');
+
+      // 1. Open WebSocket to our SFU server
+      ws = new WebSocket('ws://' + window.location.host + '/ws');
+
+      ws.onopen = async () => {
+        setStatus('WebSocket open, joining room...', 'connected');
+
+        // 2. Create the RTCPeerConnection
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        // 3. Send ICE candidates to the server as we discover them
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            ws.send(JSON.stringify({
+              type: 'candidate',
+              candidate: event.candidate
+            }));
+          }
+        };
+
+        // 4. When the server adds a remote track (someone else's audio),
+        //    create an <audio> element and play it
+        pc.ontrack = (event) => {
+          console.log('Received remote track:', event.track.kind, event.track.id);
+
+          if(event.track.kind === 'video') {
+            const video = document.createElement('video');
+            video.srcObject = event.streams[0];
+            video.autoplay = true;
+            video.muted = false;
+            video.style.width = '320px';
+            document.getElementById('remoteMedia').appendChild(video);
+          } else {
+            const audio = document.createElement('audio');
+            audio.srcObject = event.streams[0];
+            audio.autoplay = true;
+            audio.controls = true;
+            document.getElementById('remoteMedia').appendChild(audio);
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          setStatus('Peer: ' + pc.connectionState, 
+            pc.connectionState === 'connected' ? 'connected' : '');
+        };
+
+        // 5. Get local audio (microphone)
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+          stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+          const localVid = document.createElement('video');
+          localVid.srcObject = stream;
+          localVid.autoplay = true;
+          localVid.muted = true;
+          localVid.style.width = '240px';
+          document.getElementById('localVideo').appendChild(localVid);
+        } catch (err) {
+          setStatus('Microphone access denied: ' + err.message, 'error');
+          return;
+        }
+
+        // 6. Send "join" message so the server creates our Peer
+        ws.send(JSON.stringify({
+          type: 'join',
+          roomId: roomId,
+          peerId: peerId
+        }));
+
+        // 7. Create an SDP offer and send it to the server
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        ws.send(JSON.stringify({
+          type: 'offer',
+          sdp: offer.sdp
+        }));
+      };
+
+      // Handle messages from the server
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
+
+        switch (msg.type) {
+          case 'answer':
+            // Server answered our offer
+            await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+            break;
+
+          case 'offer':
+            // Server is renegotiating (a new participant joined,
+            // server needs to add their track to our connection)
+            await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({
+              type: 'answer',
+              sdp: answer.sdp
+            }));
+            break;
+
+          case 'candidate':
+            // Server sent us an ICE candidate
+            if (msg.candidate) {
+              await pc.addIceCandidate(msg.candidate);
+            }
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        setStatus('WebSocket closed', 'error');
+      };
+
+      ws.onerror = (err) => {
+        setStatus('WebSocket error', 'error');
+        console.error('WebSocket error:', err);
+      };
+    }
+  </script>
+</body>
+</html>
