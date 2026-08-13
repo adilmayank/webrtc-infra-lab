@@ -2,9 +2,11 @@ package signaling
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 
+	"minimal-sfu/media"
 	"minimal-sfu/rooms"
 
 	"github.com/gorilla/websocket"
@@ -33,7 +35,7 @@ func (rm *RoomManager) GetOrCreateRoom(id string) *rooms.Room {
 
 	room := rooms.NewRoom(id)
 	rm.rooms[id] = room
-	log.Printf("Created new room: %s", id)
+	log.Printf("Created new room: %s\n", id)
 	return room
 }
 
@@ -41,9 +43,10 @@ func (rm *RoomManager) GetOrCreateRoom(id string) *rooms.Room {
 // Each browser tab connects here — one goroutine per connection.
 func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 	var (
-		room   *rooms.Room
-		peer   *rooms.Peer
-		peerID string
+		room             *rooms.Room
+		peer             *rooms.Peer
+		peerID           string
+		initialOfferDone bool // tracks whether the first offer/answer is complete
 	)
 
 	// wsMu protects writes to this single WebSocket connection.
@@ -55,7 +58,7 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 		wsMu.Lock()
 		defer wsMu.Unlock()
 		if err := conn.WriteJSON(msg); err != nil {
-			log.Printf("WebSocket write error for peer %s: %v", peerID, err)
+			log.Printf("WebSocket write error for peer %s: %v\n", peerID, err)
 		}
 	}
 
@@ -70,13 +73,13 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
-			log.Printf("WebSocket read error: %v", err)
+			log.Printf("WebSocket read error: %v\n", err)
 			return
 		}
 
 		var msg SignalMessage
 		if err := json.Unmarshal(raw, &msg); err != nil {
-			log.Printf("Invalid JSON from client: %v", err)
+			log.Printf("Invalid JSON from client: %v\n", err)
 			continue
 		}
 
@@ -90,17 +93,22 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 			var addErr error
 			peer, addErr = room.AddPeer(peerID)
 			if addErr != nil {
-				log.Printf("Failed to add peer %s: %v", peerID, addErr)
+				log.Printf("Failed to add peer %s: %v\n", peerID, addErr)
 				return
 			}
 
 			// Set up the OnTrack handler BEFORE any SDP exchange.
 			// This ensures we're ready to receive tracks as soon as
 			// the connection is established.
+			fmt.Printf("Setting up track handler for newly joined peer: %s", peer.ID)
 			room.SetupTrackHandler(peer)
 
-			// Subscribe this new peer to all tracks already being forwarded in the room
-			room.SubscribeToExistingTracks(peer)
+			// NOTE: We do NOT call SubscribeToExistingTracks here.
+			// If we did, AddTrack would fire OnNegotiationNeeded → server creates
+			// an offer → PC moves to have-local-offer. Then when the browser's own
+			// offer arrives moments later, SetRemoteDescription fails because you
+			// can't go from have-local-offer to have-remote-offer (offer collision/glare).
+			// Instead, we subscribe after the first offer/answer completes (see TypeOffer).
 
 			// ICE candidate callback — when pion discovers a candidate,
 			// send it to the browser so it can reach us.
@@ -121,7 +129,7 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 
 			// Connection state monitoring — detect disconnects
 			peer.PeerConnection.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
-				log.Printf("Peer %s connection state: %s", peerID, state.String())
+				log.Printf("Peer %s connection state: %s\n", peerID, state.String())
 				if state == webrtc.PeerConnectionStateFailed ||
 					state == webrtc.PeerConnectionStateClosed ||
 					state == webrtc.PeerConnectionStateDisconnected {
@@ -135,11 +143,11 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 			peer.PeerConnection.OnNegotiationNeeded(func() {
 				offer, err := peer.PeerConnection.CreateOffer(nil)
 				if err != nil {
-					log.Printf("Error creating renegotiation offer for %s: %v", peerID, err)
+					log.Printf("Error creating renegotiation offer for %s: %v\n", peerID, err)
 					return
 				}
 				if err := peer.PeerConnection.SetLocalDescription(offer); err != nil {
-					log.Printf("Error setting local desc for %s: %v", peerID, err)
+					log.Printf("Error setting local desc for %s: %v\n", peerID, err)
 					return
 				}
 				sendJSON(SignalMessage{
@@ -148,7 +156,7 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 				})
 			})
 
-			log.Printf("Peer %s joined room %s", peerID, msg.RoomID)
+			log.Printf("Peer %s joined room %s\n", peerID, msg.RoomID)
 
 		case TypeOffer:
 			// --- OFFER ---
@@ -164,27 +172,35 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 			}
 
 			if err := peer.PeerConnection.SetRemoteDescription(offer); err != nil {
-				log.Printf("Error setting remote description for %s: %v", peerID, err)
+				log.Printf("Error setting remote description for %s: %v\n", peerID, err)
 				continue
 			}
 
 			answer, err := peer.PeerConnection.CreateAnswer(nil)
 			if err != nil {
-				log.Printf("Error creating answer for %s: %v", peerID, err)
+				log.Printf("Error creating answer for %s: %v\n", peerID, err)
 				continue
 			}
 
 			if err := peer.PeerConnection.SetLocalDescription(answer); err != nil {
-				log.Printf("Error setting local description for %s: %v", peerID, err)
+				log.Printf("Error setting local description for %s: %v\n", peerID, err)
 				continue
 			}
 
-			log.Printf("SDP from peer %s:\n%s", peerID, offer.SDP)
+			// log.Printf("SDP from peer %s:\n%s", peerID, offer.SDP)
 
 			sendJSON(SignalMessage{
 				Type: TypeAnswer,
 				SDP:  answer.SDP,
 			})
+
+			// After the first offer/answer completes, the PC is in "stable" state.
+			// Now it's safe to AddTrack (which triggers OnNegotiationNeeded → server
+			// sends a new offer). This avoids the glare/collision problem.
+			if !initialOfferDone {
+				initialOfferDone = true
+				room.SubscribeToExistingTracks(peer)
+			}
 
 		case TypeAnswer:
 			// --- ANSWER ---
@@ -200,7 +216,7 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 			}
 
 			if err := peer.PeerConnection.SetRemoteDescription(answer); err != nil {
-				log.Printf("Error setting remote description (answer) for %s: %v", peerID, err)
+				log.Printf("Error setting remote description (answer) for %s: %v\n", peerID, err)
 			}
 
 		case TypeCandidate:
@@ -217,8 +233,20 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 			}
 
 			if err := peer.PeerConnection.AddICECandidate(candidate); err != nil {
-				log.Printf("Error adding ICE candidate for %s: %v", peerID, err)
+				log.Printf("Error adding ICE candidate for %s: %v\n", peerID, err)
 			}
+
+		case TypeSwitchLayer:
+			if room == nil {
+				continue
+			}
+			if msg.TargetPeerID == "*" {
+				// Switch all simulcast tracks in the room (demo mode)
+				room.SwitchAllSimulcastLayers(media.Layer(msg.Layer))
+			} else {
+				room.SwitchSimulcastLayer(msg.TargetPeerID, media.Layer(msg.Layer))
+			}
+
 		}
 	}
 }

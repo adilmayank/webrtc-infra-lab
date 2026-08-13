@@ -36,24 +36,58 @@ type Room struct {
 	//	Tracks maps local track ID -> info about its source
 	//	Used to find the sender when a new peer subscribes and needs a PLI.
 	Tracks map[string]*TrackInfo
+	// SimulcastTracks maps "peerID:streamID" → SimulcastTrack
+	// Only for video tracks that arrive with an RID (simulcast enabled)
+	SimulcastTracks map[string]*media.SimulcastTrack
 }
 
 func NewRoom(id string) *Room {
 	return &Room{
-		ID:     id,
-		Peers:  make(map[string]*Peer),
-		Tracks: make(map[string]*TrackInfo),
+		ID:              id,
+		Peers:           make(map[string]*Peer),
+		Tracks:          make(map[string]*TrackInfo),
+		SimulcastTracks: make(map[string]*media.SimulcastTrack),
 	}
 }
 
 func (r *Room) AddPeer(peerID string) (*Peer, error) {
+
+	//	Create a MediaEngine and register default codecs
+	//	This ensures VP8 simulcast is properly negotiated
+	m := &webrtc.MediaEngine{}
+	if err := m.RegisterDefaultCodecs(); err != nil {
+		return nil, err
+	}
+
+	// Register RTP header extensions required for simulcast.
+	// Without these, pion can't parse the RID from incoming RTP packets
+	// and OnTrack will fire with an empty RID — breaking simulcast detection.
+	//
+	// - mid: identifies which media section (m= line) a packet belongs to
+	// - rtp-stream-id: carries the RID ("h", "m", "l") on each RTP packet
+	// - repaired-rtp-stream-id: carries the RID for RTX (retransmission) packets
+	for _, ext := range []string{
+		"urn:ietf:params:rtp-hdrext:sdes:mid",
+		"urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
+		"urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
+	} {
+		if err := m.RegisterHeaderExtension(
+			webrtc.RTPHeaderExtensionCapability{URI: ext},
+			webrtc.RTPCodecTypeVideo,
+		); err != nil {
+			return nil, err
+		}
+	}
+
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
+
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{URLs: []string{"stun:stun.l.google.com:19302"}},
 		},
 	}
 
-	pc, err := webrtc.NewPeerConnection(config)
+	pc, err := api.NewPeerConnection(config)
 	if err != nil {
 		return nil, err
 	}
@@ -74,20 +108,28 @@ func (r *Room) AddPeer(peerID string) (*Peer, error) {
 
 func (r *Room) SetupTrackHandler(peer *Peer) {
 	peer.PeerConnection.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		// remoteTrack = the audio coming IN from this peer's browser
-		//
-		// remoteTrack.Codec() tells you: is this opus audio? VP8 video?
-		// remoteTrack.Kind() tells you: audio or video
-		// remoteTrack.ID() is a unique identifier for this track
-
-		log.Printf("Peer %s sent track: codec=%s, kind=%s", peer.ID, remoteTrack.Codec().MimeType, remoteTrack.Kind())
+		log.Printf("Peer %s sent track: codec=%s, kind=%s RID=%s SSRC=%d",
+			peer.ID,
+			remoteTrack.Codec().MimeType,
+			remoteTrack.Kind(),
+			remoteTrack.RID(),
+			remoteTrack.SSRC())
 
 		peer.mu.Lock()
 		peer.RemoteTrack[remoteTrack.ID()] = remoteTrack
 		peer.mu.Unlock()
 
-		// Now we need to forward this track to every OTHER peer in the room.
-		// Step 1: Create a local track that mirrors the remote track's codec
+		// --- SIMULCAST PATH ---
+		// If the track has an RID, it's a simulcast layer
+		if remoteTrack.RID() != "" && remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
+			log.Printf("SIMULCAST TRACK DETECTED for peer: %s", peer.ID)
+			r.handleSimulcastLayer(peer, remoteTrack)
+			return
+		}
+
+		log.Printf("NON-SIMULCAST TRACK DETECTED for peer: %s", peer.ID)
+		// --- NON-SIMULCAST PATH (audio, or video without simulcast) ---
+		// This is the existing code you already have
 		localTrack, err := webrtc.NewTrackLocalStaticRTP(
 			remoteTrack.Codec().RTPCodecCapability,
 			remoteTrack.ID(),
@@ -130,7 +172,7 @@ func (r *Room) SetupTrackHandler(peer *Peer) {
 		// but for Milestone B this ensures things recover.
 		if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
 			go func() {
-				ticker := time.NewTicker(3 * time.Second)
+				ticker := time.NewTicker(5 * time.Second)
 				defer ticker.Stop()
 				for range ticker.C {
 					if r.GetPeer(peer.ID) == nil {
@@ -147,6 +189,7 @@ func (r *Room) SetupTrackHandler(peer *Peer) {
 // This tells their encoder to produce a keyframe so new subscribers can
 // decode the video stream immediately.
 func (r *Room) sendPLI(senderPeer *Peer, remoteTrack *webrtc.TrackRemote) {
+	// log.Printf("Requesting PLI sender original sender PeerID: %s for TrackID: %s\n", senderPeer.ID, remoteTrack.ID())
 	err := senderPeer.PeerConnection.WriteRTCP([]rtcp.Packet{
 		&rtcp.PictureLossIndication{
 			MediaSSRC: uint32(remoteTrack.SSRC()),
@@ -156,14 +199,16 @@ func (r *Room) sendPLI(senderPeer *Peer, remoteTrack *webrtc.TrackRemote) {
 	if err != nil {
 		log.Printf("Error sending PLI to peer %s: %v", senderPeer.ID, err)
 	} else {
-		log.Printf("Sent PLI to peer %s for track %s (SSRC: %d)",
-			senderPeer.ID, remoteTrack.ID(), remoteTrack.SSRC())
+		// log.Printf("Sent PLI to peer %s for track %s (SSRC: %d)",
+		// 	senderPeer.ID, remoteTrack.ID(), remoteTrack.SSRC())
 	}
 
 }
 
 func (r *Room) addTrackToPeer(otherPeer *Peer, track *webrtc.TrackLocalStaticRTP, senderPeer *Peer, remoteTrack *webrtc.TrackRemote) {
 	otherPeer.mu.Lock()
+
+	log.Printf("Adding track to existing peer [PeerId: %s | OUT Track ID: %s | SENDER PEERID: %s | SENDER Track ID: %s\n", otherPeer.ID, track.ID(), senderPeer.ID, remoteTrack.ID())
 
 	sender, err := otherPeer.PeerConnection.AddTrack(track)
 	if err != nil {
@@ -188,7 +233,7 @@ func (r *Room) addTrackToPeer(otherPeer *Peer, track *webrtc.TrackLocalStaticRTP
 
 	if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
 		//	Commented intentionally, to see that go routine sendPLI will anyways fix the frozen video delay
-		// r.sendPLI(senderPeer, remoteTrack)
+		r.sendPLI(senderPeer, remoteTrack)
 	}
 
 }
@@ -234,5 +279,92 @@ func (r *Room) SubscribeToExistingTracks(peer *Peer) {
 			continue
 		}
 		r.addTrackToPeer(peer, trackInfo.LocalTrack, trackInfo.SenderPeer, trackInfo.RemoteTrack)
+	}
+}
+
+func (r *Room) handleSimulcastLayer(peer *Peer, remoteTrack *webrtc.TrackRemote) {
+	rid := media.Layer(remoteTrack.RID())
+	//	Key for this peer's simulcast video: "peerID:streamID"
+	key := peer.ID + ":" + remoteTrack.StreamID()
+
+	r.mu.Lock()
+	st, exists := r.SimulcastTracks[key]
+
+	if !exists {
+		//	First layer we've received for this peer's video
+		//	Create the output track and simulcast grouping
+		outTrack, err := webrtc.NewTrackLocalStaticRTP(
+			remoteTrack.Codec().RTPCodecCapability,
+			remoteTrack.ID(), //	track ID (same across all layers)
+			remoteTrack.StreamID(),
+		)
+
+		if err != nil {
+			r.mu.Unlock()
+			log.Printf("Error creating simulcast output track: %v", err)
+			return
+		}
+
+		st = media.NewSimulcastTrack(peer.ID, outTrack)
+		r.SimulcastTracks[key] = st
+
+		//	Register in tracks map so SubscribeToExistingTracks works
+		r.Tracks[outTrack.ID()] = &TrackInfo{
+			LocalTrack:  outTrack,
+			SenderPeer:  peer,
+			RemoteTrack: remoteTrack,
+		}
+		r.mu.Unlock()
+
+		//	Add the output track to all other peers (just like non-simulcast)
+		r.mu.RLock()
+
+		for id, otherPeer := range r.Peers {
+			if id == peer.ID {
+				continue
+			}
+			r.addTrackToPeer(otherPeer, outTrack, peer, remoteTrack)
+		}
+		r.mu.RUnlock()
+
+		// Periodic PLI for active layer
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				if r.GetPeer(peer.ID) == nil {
+					return
+				}
+				r.sendPLI(peer, remoteTrack)
+			}
+		}()
+	} else {
+		r.mu.Unlock()
+	}
+
+	st.AddLayer(rid, remoteTrack)
+}
+
+// SwitchSimulcastLayer changes the forwarded quality layer for a given sender's video
+func (r *Room) SwitchSimulcastLayer(senderPeerID string, layer media.Layer) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, st := range r.SimulcastTracks {
+		if st.PeerID == senderPeerID {
+			return st.SwitchLayer(layer)
+		}
+	}
+	log.Printf("No simulcast track found for peer %s", senderPeerID)
+	return false
+}
+
+// rooms/room.go
+func (r *Room) SwitchAllSimulcastLayers(layer media.Layer) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, st := range r.SimulcastTracks {
+		st.SwitchLayer(layer)
 	}
 }
