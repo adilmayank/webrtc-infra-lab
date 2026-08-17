@@ -54,14 +54,6 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 	// try to send messages concurrently — this prevents interleaved writes.
 	var wsMu sync.Mutex
 
-	sendJSON := func(msg SignalMessage) {
-		wsMu.Lock()
-		defer wsMu.Unlock()
-		if err := conn.WriteJSON(msg); err != nil {
-			log.Printf("WebSocket write error for peer %s: %v\n", peerID, err)
-		}
-	}
-
 	defer func() {
 		if room != nil && peerID != "" {
 			room.RemovePeer(peerID)
@@ -97,6 +89,55 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 				return
 			}
 
+			// Inject the Send function — this is the ONLY bridge between
+			// the room layer and the WebSocket transport. The room calls
+			// peer.Send(RoomEvent) and this closure translates it to a
+			// SignalMessage written over the wire.
+			peer.Send = func(event rooms.RoomEvent) {
+				wsMu.Lock()
+				defer wsMu.Unlock()
+
+				wireMsg := SignalMessage{
+					Type:   MessageType(event.Type),
+					PeerID: event.PeerID,
+					SDP:    event.SDP,
+				}
+
+				if event.Candidate != nil {
+					wireMsg.Candidate = &Candidate{
+						Candidate:     event.Candidate.Candidate,
+						SDPMid:        event.Candidate.SDPMid,
+						SDPMLineIndex: event.Candidate.SDPMLineIndex,
+					}
+				}
+
+				// Map payload fields to wire message fields
+				if event.Payload != nil {
+					if sids, ok := event.Payload["streamIDs"].([]string); ok {
+						wireMsg.StreamIDs = sids
+					}
+					if tracks, ok := event.Payload["tracks"].([]rooms.TrackMetricsPayload); ok {
+						wireTracks := make([]TrackMetricsWire, len(tracks))
+						for i, t := range tracks {
+							wireTracks[i] = TrackMetricsWire{
+								PeerID:          t.PeerID,
+								ActiveLayer:     t.ActiveLayer,
+								AvailableLayers: t.AvailableLayers,
+								PacketsPerSec:   t.PacketsPerSec,
+								BytesPerSec:     t.BytesPerSec,
+								BitrateKbps:     t.BitrateKbps,
+								FramesPerSec:    t.FramesPerSec,
+							}
+						}
+						wireMsg.Metrics = &MetricsPayload{Tracks: wireTracks}
+					}
+				}
+
+				if err := conn.WriteJSON(wireMsg); err != nil {
+					log.Printf("WebSocket write error for peer %s: %v\n", peer.ID, err)
+				}
+			}
+
 			// Set up the OnTrack handler BEFORE any SDP exchange.
 			// This ensures we're ready to receive tracks as soon as
 			// the connection is established.
@@ -117,9 +158,9 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 					return // ICE gathering complete, nothing to send
 				}
 				init := c.ToJSON()
-				sendJSON(SignalMessage{
-					Type: TypeCandidate,
-					Candidate: &Candidate{
+				peer.Send(rooms.RoomEvent{
+					Type: rooms.EventCandidate,
+					Candidate: &rooms.CandidateInfo{
 						Candidate:     init.Candidate,
 						SDPMid:        init.SDPMid,
 						SDPMLineIndex: init.SDPMLineIndex,
@@ -150,8 +191,8 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 					log.Printf("Error setting local desc for %s: %v\n", peerID, err)
 					return
 				}
-				sendJSON(SignalMessage{
-					Type: TypeOffer,
+				peer.Send(rooms.RoomEvent{
+					Type: rooms.EventOffer,
 					SDP:  offer.SDP,
 				})
 			})
@@ -187,10 +228,8 @@ func (rm *RoomManager) HandleWebSocket(conn *websocket.Conn) {
 				continue
 			}
 
-			// log.Printf("SDP from peer %s:\n%s", peerID, offer.SDP)
-
-			sendJSON(SignalMessage{
-				Type: TypeAnswer,
+			peer.Send(rooms.RoomEvent{
+				Type: rooms.EventAnswer,
 				SDP:  answer.SDP,
 			})
 

@@ -135,14 +135,14 @@ to fill in as you go. Don't fill it in upfront — let the document follow the b
 - [x] A 4th participant joining mid-call hears existing participants immediately
 
 *Milestone B — Video forwarding:*
-- [ ] Video tracks forwarded the same way audio is
-- [ ] A newly-joined participant receives a fresh keyframe (not a frozen/green
+- [x] Video tracks forwarded the same way audio is
+- [x] A newly-joined participant receives a fresh keyframe (not a frozen/green
       screen on join) — this means your PLI handling works
 
 *Milestone C — Simulcast (stretch, but worth attempting):*
-- [ ] Client sends 2+ quality layers
-- [ ] SFU selects and forwards one layer
-- [ ] You can demonstrate switching which layer is forwarded (even manually
+- [x] Client sends 2+ quality layers
+- [x] SFU selects and forwards one layer
+- [x] You can demonstrate switching which layer is forwarded (even manually
       triggered, doesn't need to be automatic/adaptive yet)
 
 *Milestone D — Documentation:*

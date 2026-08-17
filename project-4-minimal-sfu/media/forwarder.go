@@ -2,9 +2,16 @@ package media
 
 import (
 	"log"
+	"sync/atomic"
 
 	"github.com/pion/webrtc/v3"
 )
+
+type TrackStats struct {
+	Packets atomic.Uint64
+	Bytes   atomic.Uint64
+	Frames  atomic.Uint64 // marker bit count
+}
 
 // ForwardRTP reads RTP packets from a remote track and writes them
 // to a local track. This is the core forwarding loop of the SFU.
@@ -12,7 +19,7 @@ import (
 // It runs in its own goroutine per remote track and exits when the
 // remote track closes (peer disconnects or track is removed).
 
-func ForwardRTP(remoteTrack *webrtc.TrackRemote, localTrack *webrtc.TrackLocalStaticRTP) {
+func ForwardRTP(remoteTrack *webrtc.TrackRemote, localTrack *webrtc.TrackLocalStaticRTP, stats *TrackStats) {
 	buf := make([]byte, 1500) //	MTU-sized buffer for one RTP packet
 
 	for {
@@ -28,6 +35,12 @@ func ForwardRTP(remoteTrack *webrtc.TrackRemote, localTrack *webrtc.TrackLocalSt
 		if _, writeErr := localTrack.Write(buf[:n]); writeErr != nil {
 			log.Printf("Track %s write error: %v", localTrack.ID(), writeErr)
 			return
+		}
+
+		stats.Packets.Add(1)
+		stats.Bytes.Add(uint64(n))
+		if n >= 2 && buf[1]&0x80 != 0 {
+			stats.Frames.Add(1)
 		}
 
 	}
