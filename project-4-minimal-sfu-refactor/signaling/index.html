@@ -1,0 +1,1040 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Minimal SFU - Audio/Video Room</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --surface: #ffffff;
+      --border: #e2e4e9;
+      --border-hover: #d0d3da;
+      --text: #1a1d24;
+      --text-mid: #4b5060;
+      --text-muted: #8b8f9f;
+      --accent: #5b4cd4;
+      --accent-hover: #7061e0;
+      --accent-subtle: rgba(91, 76, 212, 0.08);
+      --green: #16a34a;
+      --green-bg: rgba(22, 163, 74, 0.08);
+      --red: #dc2626;
+      --red-bg: rgba(220, 38, 38, 0.08);
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04);
+      --shadow-lg: 0 12px 36px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
+      --radius: 12px;
+      --radius-lg: 16px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    /* ═══════════════════════════════════════════
+       LANDING
+       ═══════════════════════════════════════════ */
+    .landing {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      transition: opacity 0.4s, visibility 0.4s;
+    }
+
+    .landing.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .landing-inner {
+      display: flex;
+      align-items: center;
+      gap: 48px;
+      max-width: 860px;
+      width: 90%;
+    }
+
+    /* Preview card */
+    .preview-card {
+      flex: 1;
+      aspect-ratio: 4 / 3;
+      max-width: 400px;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: #1a1d24;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+    }
+
+    .preview-card video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    .preview-card .placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: rgba(255,255,255,0.5);
+      font-size: 13px;
+    }
+
+    .preview-card .placeholder svg {
+      width: 40px;
+      height: 40px;
+      opacity: 0.4;
+    }
+
+    /* Join form */
+    .join-form {
+      flex: 1;
+      max-width: 340px;
+    }
+
+    .join-form .brand {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--accent);
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .join-form h1 {
+      font-size: 1.7rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.3px;
+    }
+
+    .join-form .desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 28px;
+    }
+
+    .field {
+      margin-bottom: 16px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-mid);
+      margin-bottom: 5px;
+    }
+
+    .field input {
+      width: 100%;
+      padding: 11px 14px;
+      font-size: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .field input::placeholder { color: var(--text-muted); }
+
+    .field input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-subtle);
+    }
+
+    .option-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 24px;
+    }
+
+    .option-row .label {
+      font-size: 13px;
+      color: var(--text-mid);
+    }
+
+    .pill-toggle {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      cursor: pointer;
+    }
+
+    .pill-toggle input { display: none; }
+
+    .pill-toggle .track {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 10px;
+      transition: background 0.2s;
+    }
+
+    .pill-toggle .track::after {
+      content: '';
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      top: 3px;
+      left: 3px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+      transition: transform 0.2s;
+    }
+
+    .pill-toggle input:checked + .track {
+      background: var(--accent);
+    }
+
+    .pill-toggle input:checked + .track::after {
+      transform: translateX(16px);
+    }
+
+    .join-btn {
+      width: 100%;
+      padding: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .join-btn:hover {
+      background: var(--accent-hover);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .join-btn:active { transform: translateY(0); }
+
+    .join-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    /* ═══════════════════════════════════════════
+       IN-CALL
+       ═══════════════════════════════════════════ */
+    .call-view {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      padding: 16px;
+      gap: 12px;
+    }
+
+    .call-view.active { display: flex; }
+
+    /* Header bar */
+    .call-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      flex-shrink: 0;
+    }
+
+    .call-header .left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .call-header .room-name {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .call-header .dot-sep {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--border-hover);
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      padding: 3px 10px;
+      border-radius: 12px;
+      background: var(--bg);
+    }
+
+    .status-pill .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .status-pill.connected {
+      color: var(--green);
+      background: var(--green-bg);
+    }
+    .status-pill.connected .dot { background: var(--green); }
+
+    .status-pill.error {
+      color: var(--red);
+      background: var(--red-bg);
+    }
+    .status-pill.error .dot { background: var(--red); }
+
+    .call-header .right { display: flex; align-items: center; gap: 6px; }
+
+    .header-btn {
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text-mid);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+
+    .header-btn:hover {
+      background: var(--bg);
+      border-color: var(--border-hover);
+      color: var(--text);
+    }
+
+    .header-btn.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--accent-subtle);
+    }
+
+    /* Main content: sidebar + grid */
+    .call-body {
+      flex: 1;
+      display: flex;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    /* Left metrics sidebar */
+    .metrics-sidebar {
+      width: 240px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 14px;
+      overflow-y: auto;
+      display: none;
+      font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 11px;
+    }
+
+    .metrics-sidebar.open { display: block; }
+
+    .metrics-sidebar h3 {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      font-family: -apple-system, sans-serif;
+      font-weight: 700;
+    }
+
+    .debug-track {
+      padding: 7px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .debug-track:last-child { border-bottom: none; }
+
+    .debug-track .track-peer {
+      font-weight: 600;
+      margin-bottom: 3px;
+      color: var(--accent);
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .debug-track .track-stat {
+      display: flex;
+      justify-content: space-between;
+      margin: 2px 0;
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    .debug-track .track-stat .val {
+      color: var(--text-mid);
+      font-weight: 500;
+    }
+
+    .debug-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      font-size: 10px;
+    }
+
+    /* Video grid container */
+    .grid-container {
+      flex: 1;
+      min-width: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+      padding: 10px;
+    }
+
+    .video-grid {
+      display: grid;
+      gap: 8px;
+      width: 100%;
+      height: 100%;
+    }
+
+    .video-grid[data-count="0"],
+    .video-grid[data-count="1"] {
+      grid-template-columns: 1fr;
+      grid-template-rows: 1fr;
+    }
+
+    .video-grid[data-count="2"] {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr;
+    }
+
+    .video-grid[data-count="3"],
+    .video-grid[data-count="4"] {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+    }
+
+    .video-grid[data-count="5"],
+    .video-grid[data-count="6"] {
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+    }
+
+    .video-tile {
+      border-radius: 10px;
+      background: #1a1d24;
+      overflow: hidden;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .video-tile video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 10px;
+    }
+
+    .video-tile .tile-label {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      background: rgba(0, 0, 0, 0.55);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 500;
+      padding: 3px 8px;
+      border-radius: 5px;
+    }
+
+    .empty-state {
+      color: var(--text-muted);
+      font-size: 13px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .empty-state svg {
+      width: 32px;
+      height: 32px;
+      color: var(--border-hover);
+    }
+
+    /* Local PiP */
+    .local-pip {
+      position: fixed;
+      bottom: 80px;
+      right: 28px;
+      width: 180px;
+      height: 135px;
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: #1a1d24;
+      box-shadow: var(--shadow-lg);
+      border: 3px solid var(--surface);
+      z-index: 50;
+      cursor: grab;
+      transition: transform 0.2s;
+    }
+
+    .local-pip:hover { transform: scale(1.03); }
+
+    .local-pip video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    .local-pip .pip-label {
+      position: absolute;
+      bottom: 5px;
+      left: 7px;
+      background: rgba(0, 0, 0, 0.6);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 500;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    /* Bottom control bar */
+    .control-bar {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      flex-shrink: 0;
+    }
+
+    .control-bar.visible { display: flex; }
+
+    .control-bar .bar-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-right: 10px;
+    }
+
+    .control-bar button {
+      padding: 7px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--text-mid);
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+
+    .control-bar button:hover {
+      background: var(--bg);
+      border-color: var(--border-hover);
+      color: var(--text);
+    }
+
+    .control-bar button:disabled {
+      opacity: 0.25;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .control-bar button.active-layer {
+      border-color: var(--accent);
+      background: var(--accent-subtle);
+      color: var(--accent);
+    }
+
+    .control-bar .indicator {
+      margin-left: 10px;
+      padding-left: 10px;
+      border-left: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+
+    /* Responsive */
+    @media (max-width: 700px) {
+      .landing-inner { flex-direction: column; gap: 24px; }
+      .preview-card { max-width: 100%; }
+      .join-form { max-width: 100%; }
+      .metrics-sidebar { width: 180px; }
+      .local-pip { width: 140px; height: 105px; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- ═══════ LANDING ═══════ -->
+  <div id="joinOverlay" class="landing">
+    <div class="landing-inner">
+      <div class="preview-card">
+        <video id="previewVideo" autoplay muted playsinline></video>
+        <div id="previewPlaceholder" class="placeholder">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"/>
+          </svg>
+          <span>Camera preview</span>
+        </div>
+      </div>
+
+      <div class="join-form">
+        <div class="brand">Minimal SFU</div>
+        <h1>Join a room</h1>
+        <p class="desc">Enter a room name to connect. Anyone else in the same room will appear in the video grid.</p>
+
+        <div class="field">
+          <label for="roomInput">Room name</label>
+          <input id="roomInput" type="text" placeholder="e.g. team-standup" value="test-room" />
+        </div>
+
+        <div class="option-row">
+          <span class="label">Simulcast</span>
+          <label class="pill-toggle">
+            <input id="simulcastToggle" type="checkbox" checked />
+            <span class="track"></span>
+          </label>
+        </div>
+
+        <button id="joinBtn" class="join-btn" onclick="join()">Join Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ IN-CALL ═══════ -->
+  <div id="callScreen" class="call-view">
+    <!-- Header -->
+    <div class="call-header">
+      <div class="left">
+        <span class="room-name" id="roomLabel">test-room</span>
+        <span class="dot-sep"></span>
+        <div id="statusBadge" class="status-pill">
+          <span class="dot"></span>
+          <span id="statusText">Connecting</span>
+        </div>
+      </div>
+      <div class="right">
+        <button id="metricsToggleBtn" class="header-btn" onclick="toggleMetrics()">Metrics</button>
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div class="call-body">
+      <!-- Left metrics -->
+      <div id="debugPanel" class="metrics-sidebar">
+        <h3>SFU Metrics</h3>
+        <div id="debugContent">
+          <span class="debug-empty">Waiting...</span>
+        </div>
+      </div>
+
+      <!-- Video grid -->
+      <div class="grid-container">
+        <div id="remoteGrid" class="video-grid" data-count="0">
+          <div class="empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/>
+            </svg>
+            <span>Waiting for participants...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom bar -->
+    <div id="toolbar" class="control-bar">
+      <span class="bar-label">Layer</span>
+      <button id="btn-h" onclick="switchLayer('h')" disabled>High</button>
+      <button id="btn-m" onclick="switchLayer('m')">Med</button>
+      <button id="btn-l" onclick="switchLayer('l')">Low</button>
+      <span class="indicator" id="currentLayer">medium</span>
+    </div>
+  </div>
+
+  <!-- Local PiP -->
+  <div id="localPip" class="local-pip" style="display:none;">
+    <span class="pip-label">You</span>
+  </div>
+
+  <script>
+    let ws;
+    let pc;
+    const peerId = 'peer-' + Math.random().toString(36).substr(2, 8);
+    let candidateBuffer = [];
+    let remoteCount = 0;
+
+    // Camera preview
+    (async function initPreview() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const vid = document.getElementById('previewVideo');
+        vid.srcObject = stream;
+        document.getElementById('previewPlaceholder').style.display = 'none';
+      } catch (e) {}
+    })();
+
+    function toggleMetrics() {
+      const panel = document.getElementById('debugPanel');
+      const btn = document.getElementById('metricsToggleBtn');
+      panel.classList.toggle('open');
+      btn.classList.toggle('active');
+    }
+
+    function setStatus(text, state) {
+      const badge = document.getElementById('statusBadge');
+      const label = document.getElementById('statusText');
+      label.textContent = text;
+      badge.className = 'status-pill' + (state ? ' ' + state : '');
+    }
+
+    function updateGridCount() {
+      const grid = document.getElementById('remoteGrid');
+      grid.setAttribute('data-count', remoteCount);
+    }
+
+    async function flushCandidates() {
+      while (candidateBuffer.length > 0) {
+        const c = candidateBuffer.shift();
+        await pc.addIceCandidate(c);
+      }
+    }
+
+    function switchLayer(layer) {
+      ws.send(JSON.stringify({
+        type: 'switchLayer',
+        targetPeerId: '*',
+        layer: layer
+      }));
+      const labels = { h: 'high', m: 'medium', l: 'low' };
+      document.getElementById('currentLayer').textContent = labels[layer];
+
+      document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active-layer'));
+      document.getElementById('btn-' + layer).classList.add('active-layer');
+    }
+
+    async function join() {
+      const roomId = document.getElementById('roomInput').value.trim();
+      if (!roomId) {
+        alert('Enter a room name');
+        return;
+      }
+
+      document.getElementById('joinBtn').disabled = true;
+      document.getElementById('roomLabel').textContent = roomId;
+      setStatus('Connecting...');
+
+      ws = new WebSocket('ws://' + window.location.host + '/ws');
+
+      ws.onopen = async () => {
+        setStatus('Connected', 'connected');
+
+        // Stop preview stream
+        const previewVid = document.getElementById('previewVideo');
+        if (previewVid.srcObject) {
+          previewVid.srcObject.getTracks().forEach(t => t.stop());
+          previewVid.srcObject = null;
+        }
+
+        // Switch screens
+        document.getElementById('joinOverlay').classList.add('hidden');
+        document.getElementById('callScreen').classList.add('active');
+
+        pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            ws.send(JSON.stringify({
+              type: 'candidate',
+              candidate: event.candidate
+            }));
+          }
+        };
+
+        pc.ontrack = (event) => {
+          console.log('Received remote track:', event.track.kind, event.track.id);
+          const grid = document.getElementById('remoteGrid');
+
+          const emptyState = grid.querySelector('.empty-state');
+          if (emptyState) emptyState.remove();
+
+          if (event.track.kind === 'video') {
+            const tile = document.createElement('div');
+            tile.className = 'video-tile';
+            tile.setAttribute('data-stream-id', event.streams[0].id);
+
+            const video = document.createElement('video');
+            video.srcObject = event.streams[0];
+            video.autoplay = true;
+            video.muted = false;
+            tile.appendChild(video);
+
+            const label = document.createElement('span');
+            label.className = 'tile-label';
+            label.textContent = 'Participant';
+            tile.appendChild(label);
+
+            grid.appendChild(tile);
+            remoteCount++;
+            updateGridCount();
+          } else {
+            const audio = document.createElement('audio');
+            audio.srcObject = event.streams[0];
+            audio.autoplay = true;
+            grid.appendChild(audio);
+          }
+        };
+
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'connected') {
+            setStatus('Connected', 'connected');
+            if (true) {
+              document.getElementById('toolbar').classList.add('visible');
+              document.getElementById('debugPanel').classList.add('open');
+              document.getElementById('metricsToggleBtn').classList.add('active');
+            }
+          } else if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+            setStatus('Disconnected', 'error');
+          }
+        };
+
+        // Get local media
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: { width: { ideal: 1280 }, height: { ideal: 720 } }
+          });
+
+          const audioTrack = stream.getAudioTracks()[0];
+          if (audioTrack) {
+            pc.addTrack(audioTrack, stream);
+          }
+
+          const videoTrack = stream.getVideoTracks()[0];
+          const simulcastEnabled = document.getElementById('simulcastToggle').checked;
+
+          if (videoTrack) {
+            if (simulcastEnabled) {
+              pc.addTransceiver(videoTrack, {
+                direction: 'sendrecv',
+                streams: [stream],
+                sendEncodings: [
+                  { rid: 'l', maxBitrate: 300000, scaleResolutionDownBy: 4 },
+                  { rid: 'm', maxBitrate: 1200000, scaleResolutionDownBy: 2 },
+                  { rid: 'h', maxBitrate: 3000000, scaleResolutionDownBy: 1 },
+                ]
+              });
+            } else {
+              pc.addTrack(videoTrack, stream);
+            }
+          }
+
+          // Show local PiP
+          const pip = document.getElementById('localPip');
+          const localVid = document.createElement('video');
+          localVid.srcObject = stream;
+          localVid.autoplay = true;
+          localVid.muted = true;
+          pip.prepend(localVid);
+          pip.style.display = 'block';
+        } catch (err) {
+          setStatus('Media denied: ' + err.message, 'error');
+          return;
+        }
+
+        // Send join + offer
+        ws.send(JSON.stringify({
+          type: 'join',
+          roomId: roomId,
+          peerId: peerId
+        }));
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        ws.send(JSON.stringify({
+          type: 'offer',
+          sdp: offer.sdp
+        }));
+      };
+
+      ws.onmessage = async (event) => {
+        const msg = JSON.parse(event.data);
+
+        switch (msg.type) {
+          case 'answer':
+            await pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp });
+            await flushCandidates();
+            break;
+
+          case 'offer':
+            await pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp });
+            await flushCandidates();
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            ws.send(JSON.stringify({
+              type: 'answer',
+              sdp: answer.sdp
+            }));
+            break;
+
+          case 'candidate':
+            if (!pc.remoteDescription) {
+              candidateBuffer.push(msg.candidate);
+            } else {
+              await pc.addIceCandidate(msg.candidate);
+            }
+            break;
+
+          case "peer-left":
+            const streamIDs = msg.streamIDs || [];
+            const grid = document.getElementById('remoteGrid');
+            streamIDs.forEach(sid => {
+              const tile = grid.querySelector(`[data-stream-id="${sid}"]`);
+              if (tile) {
+                tile.remove();
+                remoteCount--;
+              }
+            });
+            updateGridCount();
+            if (remoteCount <= 0) {
+              remoteCount = 0;
+              grid.innerHTML = '<div class="empty-state"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 18.72a9.094 9.094 0 003.741-.479 3 3 0 00-4.682-2.72m.94 3.198l.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0112 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 016 18.719m12 0a5.971 5.971 0 00-.941-3.197m0 0A5.995 5.995 0 0012 12.75a5.995 5.995 0 00-5.058 2.772m0 0a3 3 0 00-4.681 2.72 8.986 8.986 0 003.74.477m.94-3.197a5.971 5.971 0 00-.94 3.197M15 6.75a3 3 0 11-6 0 3 3 0 016 0zm6 3a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0zm-13.5 0a2.25 2.25 0 11-4.5 0 2.25 2.25 0 014.5 0z"/></svg><span>Waiting for participants...</span></div>';
+            }
+            break;
+
+          case 'metrics':
+            renderMetrics(msg.metrics);
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        setStatus('Disconnected', 'error');
+      };
+
+      ws.onerror = (err) => {
+        setStatus('Error', 'error');
+        console.error('WebSocket error:', err);
+      };
+    }
+
+    function renderMetrics(metrics) {
+      if (!metrics || !metrics.tracks) return;
+      const container = document.getElementById('debugContent');
+
+      if (metrics.tracks.length === 0) {
+        container.innerHTML = '<span class="debug-empty">No simulcast tracks yet</span>';
+        return;
+      }
+
+      const allLayers = new Set();
+      for (const t of metrics.tracks) {
+        for (const l of t.availableLayers) {
+          allLayers.add(l);
+        }
+      }
+
+      ['h', 'm', 'l'].forEach(layer => {
+        const btn = document.getElementById('btn-' + layer);
+        if (btn) {
+          btn.disabled = !allLayers.has(layer);
+        }
+      });
+
+      const sorted = [...metrics.tracks].sort((a, b) => {
+        const kindOrder = { video: 0, audio: 1 };
+        const ka = kindOrder[a.activeLayer] !== undefined ? kindOrder[a.activeLayer] : -1;
+        const kb = kindOrder[b.activeLayer] !== undefined ? kindOrder[b.activeLayer] : -1;
+        if (ka !== kb) return ka - kb;
+        return a.peerId.localeCompare(b.peerId);
+      });
+
+      let html = '';
+      for (const t of sorted) {
+        const layerNames = { h: 'High', m: 'Med', l: 'Low' };
+        const isAudio = t.activeLayer === 'audio';
+        const isVideo = t.activeLayer === 'video';
+        const activeLabel = isAudio ? 'Audio' : isVideo ? 'Video' : (layerNames[t.activeLayer] || t.activeLayer);
+        const availStr = t.availableLayers.map(l => layerNames[l] || l).join(', ') || '-';
+        const kindIcon = isAudio ? '🔊' : '🎥';
+
+        html += `
+          <div class="debug-track">
+            <div class="track-peer">${kindIcon} ${t.peerId}</div>
+            <div class="track-stat"><span>${isAudio || isVideo ? 'Kind' : 'Layer'}</span><span class="val">${activeLabel}</span></div>
+            ${!isAudio && !isVideo ? `<div class="track-stat"><span>Available</span><span class="val">${availStr}</span></div>` : ''}
+            ${!isAudio ? `<div class="track-stat"><span>FPS</span><span class="val">${t.framesPerSec}</span></div>` : ''}
+            <div class="track-stat"><span>Packets/s</span><span class="val">${t.packetsPerSec}</span></div>
+            <div class="track-stat"><span>Bitrate</span><span class="val">${t.bitrateKbps.toFixed(1)} kbps</span></div>
+          </div>
+        `;
+      }
+      container.innerHTML = html;
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+  </script>
+</body>
+
+</html>
