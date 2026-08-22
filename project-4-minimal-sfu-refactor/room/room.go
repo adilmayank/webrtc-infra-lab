@@ -25,6 +25,9 @@ type Room struct {
 	// metricsOnce ensures the metrics goroutine starts exactly once.
 	metricsOnce sync.Once
 	stopMetrics chan any
+
+	//	called when last peer leaves
+	onEmpty func()
 }
 
 // OutputTrack represents a single outbound track in the room —
@@ -82,6 +85,8 @@ func (r *Room) RemovePeer(peerID string) {
 	}
 	delete(r.peers, peerID)
 
+	empty := len(r.peers) == 0
+
 	//	Collect stream IDs of tracks this peer was publishing
 	//	(the browser uses these to remove video tiles)
 	var streamIDs []string
@@ -108,6 +113,11 @@ func (r *Room) RemovePeer(peerID string) {
 		p.Send(event)
 	}
 	r.mu.RUnlock()
+
+	if empty && r.onEmpty != nil {
+		close(r.stopMetrics)
+		r.onEmpty()
+	}
 
 	log.Printf("[room] peer=%s removed from room=%s (remaining: %d)", peerID, r.ID, len(r.peers))
 

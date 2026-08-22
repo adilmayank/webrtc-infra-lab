@@ -24,6 +24,7 @@ func (m *Manager) GetOrCreate(roomID string) *Room {
 	}
 
 	r := NewRoom(roomID)
+	r.onEmpty = func() { m.Remove(roomID) }
 	m.rooms[roomID] = r
 	return r
 }
