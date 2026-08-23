@@ -245,7 +245,7 @@ Same lifecycle pattern as my job orchestrator - goroutines are spawned with a cl
 
 - Auth not implemented
 - TURN not implemented
-- Telemetry
+- Telemetry partially implemented
 - Simulcast layer policy, no ABR
 - Reconnection not implemented
 - Graceful shutdown not implemented
