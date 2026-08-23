@@ -1,5 +1,8 @@
 ## 1. Project Overview
 
+This project is called a Minimal SFU which implements very stripped down yet core functionality of a production grade SFU. My agenda was to write my own SFU to understand how big projects like Livekit is working internally. Although this project only scratches the surface of what's being used in the industry, its my first step towards understanding and entering the field of real time communication, with Golang's ecosystem.
+
+This SFU supports simulcast, but do not support any ABR algorithm to selectively forward most appropriate layer to the peer. Quality layer switching capability is manual and is applied globally on a room level.
 
 ---
 
@@ -14,7 +17,7 @@
 
 **Non-Goals**
 
-- **Transcoding:** At this point, I am only interested in forwarding whatever I am getting from the peers. Without having to decode/re-encode media packets, saving CPU usage. Moreover the transcoding the incoming media stream would make the solution more like an MCU (Multipoint Control Unit) which is architerually a different thing.
+- **Transcoding:** At this point, I am only interested in forwarding whatever I am getting from the peers. Without having to decode/re-encode media packets, saving CPU usage. Moreover the transcoding the incoming media stream would make the solution more like an MCU (Multipoint Control Unit) which is architecturally a different thing.
 
 - **TURN relay implementation:** So far the development and testing of the SFU is being done only on local environment and for non production use. Since all the peers are behind the same NAT (type `host`), the problem which TURN servers are there for, does not arise. In production I would use something like coturn or some other managed TURN services like Cloudflare TURN servers.
 
@@ -25,10 +28,6 @@
 ---
 
 ## 3. High-Level Architecture
-
-### Diagram
-
-*(TODO: boxes and arrows — signaling server, SFU core, participants, TURN server)*
 
 ### Join Flow: participant joins a room → sees other participants' video
 
@@ -193,15 +192,36 @@ No automated policy. As a proof of concept, layer switching is a per-room operat
 
 **Goroutine-per-peer? Goroutine-per-track? Worker pool?**
 
-answer_here
+Goroutines are spawned at different level of abstractions. Below is the list
+- One goroutine per peer for reading from the websocket connection
+- One goroutine per room for sending metrics over to all the peers connected to that room over transport method (websocket here)
+- One goroutine per incoming track for rtp forwarding
+- One goroutine per incoming track/layer for requesting keyframe from publisher
+- One goroutine per outbound subscription to drain rtcp frames
+
+In a 3-peer room where each publishes audio + video (simulcast layer), following are the goroutines - 
+- 1 metrics per room
+- 1 websocket connection per peer, i.e. 3
+- 1 forwarding loop per incoming audio track per peer, i.e. 3 
+- 1 simulcast read loop per incoming quality track per peer, i.e. 3 quality tracks for 3 peers i.e. 9 
+- 1 PLI sender per layer per peer, i.e. 9,
+- 1 drain goroutine per subscribing peer's sender. For a peer who subscribes to two other peer's audio and video its 4 drain goroutine per peer, so 12 goroutines for 3 peers.
+
+Total Goroutines = 1 + 3 + 3 + 9 + 9 + 12 = ~37
 
 **How is shared state protected?**
 
-answer_here
+Shared state is protected by using mutexes and RWMutexes. Below is the list - 
+- mu sync.RWMutex per room
+- metricsOnce sync.Once to ensure metrics loop start only once
+- mu sync.Mutex per websocket connection
+- mu sync.RWMutex to protect the rooms map in Manager struct
+- mu sync.Mutex to protect a SimulcastTrack and PLISenders
+- seqMu sync.Mutex to protect read/writes to the sequence field of simulcast track
 
 **Design choices from earlier projects:**
 
-answer_here
+Same lifecycle pattern as my job orchestrator - goroutines are spawned with a clear termination signal, parent doesn't need to track them, they exit when their input closes or context cancels
 
 ---
 
@@ -209,15 +229,26 @@ answer_here
 
 **Scale ceiling:**
 
-answer_here
+- Single node, single process. No horizontal scaling,
+- I'e so far only tested with 4 peer locally,
+- Goroutine count grows roughly at O(peer<sup>2</sup> x tracks)
 
 **What breaks under packet loss / poor network conditions?**
 
-answer_here
+- No NACK handling, i.e. if a packet is lost between publisher and sfu, publisher has no way of getting that lost packet
+- No bandwidth estimation / congestion control, sfu sends to susbcribers whatever publisher sends. There is no mechanism through which a subscriber can select a particular layer (in case of simulcast),
+- No ACK mechanism for RTCP
+- If PeerConnection state goes to failed/disconnected, peer is removed and there is no reconnect.
+- No jitter buffer on the SFU side.
 
 **What's stubbed vs real:**
 
-answer_here
+- Auth not implemented
+- TURN not implemented
+- Telemetry
+- Simulcast layer policy, no ABR
+- Reconnection not implemented
+- Graceful shutdown not implemented
 
 ---
 
@@ -225,18 +256,19 @@ answer_here
 
 **If I had more time:**
 
-answer_here
+If I had more time, I would have implemented Adaptive Bitrate algorithms to consider few factors like bandwidth congestion and viewport size of the video and a custom leave button to trigger graceful leaving of a peer.
 
 **Link forward to Projects 5 & 6:**
 
-answer_here
+Project 5 and 6 are adding telemetry and horizontal scaling to the application.
 
 ---
 
 ## 8. How to Run It
 
 ```
-# placeholder — actual commands once the project has a shape
+cd project-4-minimal-sfu-refactor
+go run .
 ```
 
 ---
